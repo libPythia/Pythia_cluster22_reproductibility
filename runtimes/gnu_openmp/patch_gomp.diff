@@ -1,0 +1,425 @@
+diff --git a/build.sh b/build.sh
+new file mode 100755
+index 00000000000..d31baf00e27
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,31 @@
++#!/bin/bash
++
++ROOT=`realpath $(dirname "$0")`
++CPU_CORES=`grep -c "^processor" /proc/cpuinfo`
++BUILD_DIR=build_dir
++
++cd "$ROOT"
++
++if test "$1" == "FORCE"
++then
++	rm -r "$BUILD_DIR"
++fi
++
++export LD_LIBRARY_PATH="$ETA_PATH/lib"
++
++if test -e "$BUILD_DIR"
++then
++	cd "$BUILD_DIR"
++	make -j$CPU_CORES -s && make install
++else
++	export PREFIX="$ROOT/install"
++	mkdir "$BUILD_DIR"
++	cd "$BUILD_DIR"
++	export CXXFLAGS="-w -O3 -I$ETA_PATH/include/"
++	export CPPFLAGS=$CXXFLAGS
++	export CFLAGS="-O3 -I$ETA_PATH/include/"
++	export LDFLAGS="-L$ETA_PATH/lib -leta_oracle"
++	../configure --prefix="$PREFIX" --disable-multilib
++        make -s -j$CPU_CORES && make install
++fi
++
+diff --git a/disable.sh b/disable.sh
+new file mode 100644
+index 00000000000..3a0ff055cfb
+--- /dev/null
++++ b/disable.sh
+@@ -0,0 +1,10 @@
++if [ "$OLD_PATH" != "" ]
++then
++	export PATH=$OLD_PATH
++	export LD_LIBRARY_PATH=$OLD_LD_LIBRARY_PATH
++	export LD_PRELOAD=$OLD_LD_PRELOAD
++	echo "\$PATH back to: $PATH"
++	echo "\$LD_LIBRARY_PATH back to: $LD_LIBRARY_PATH"
++	echo "\$LD_PRELOAD back to: $LD_PRELOAD"
++fi
++
+diff --git a/enable.sh b/enable.sh
+new file mode 100644
+index 00000000000..3a55a456b63
+--- /dev/null
++++ b/enable.sh
+@@ -0,0 +1,21 @@
++INSTALL_DIR=`realpath $(dirname $BASH_SOURCE)`/install
++
++export GOMP_CPU_AFFINITY=`hwloc-calc --physical-output --intersect PU --no-smt all`
++
++if [ "$OLD_PATH" == "" ]
++then
++	OLD_PATH=$PATH
++	OLD_LD_LIBRARY_PATH=$LD_LIBRARY_PATH
++	OLD_LD_PRELOAD=$LD_PRELOAD
++fi
++
++bin_path=$INSTALL_DIR/bin
++lib_path=$INSTALL_DIR/lib:$INSTALL_DIR/lib64
++lib=$ETA_PATH/lib/x86_64-linux-gnu/libeta_oracle.so
++
++export PATH=$bin_path:$OLD_PATH
++export LD_LIBRARY_PATH=$lib_path:$ETA_PATH/lib:$ETA_PATH/lib/x86_64-linux-gnu/:$OLD_LD_LIBRARY_PATH
++
++echo "New \$PATH: $PATH"
++echo "New \$LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
++echo "New \$LD_PRELOAD: $LD_PRELOAD"
+diff --git a/libgomp/libgomp.h b/libgomp/libgomp.h
+index 299cf42be21..3a08b04af67 100644
+--- a/libgomp/libgomp.h
++++ b/libgomp/libgomp.h
+@@ -800,7 +800,9 @@ struct gomp_thread_pool
+   /* This array manages threads spawned from the top level, which will
+      return to the idle loop once the current PARALLEL construct ends.  */
+   struct gomp_thread **threads;
++  /* size of the threads array */
+   unsigned threads_size;
++  /* number of thread in the current team */
+   unsigned threads_used;
+   /* The last team is used for non-nested teams to delay their destruction to
+      make sure all the threads in the team move on to the pool's barrier before
+diff --git a/libgomp/parallel.c b/libgomp/parallel.c
+index 7683b9b201e..a8c8d1fd689 100644
+--- a/libgomp/parallel.c
++++ b/libgomp/parallel.c
+@@ -28,6 +28,134 @@
+ #include "libgomp.h"
+ #include <limits.h>
+ 
++#define ETA_ENABLED // TODO
++
++#ifdef ETA_ENABLED
++
++#include <string.h>
++#include <assert.h>
++#include <stdio.h>
++#include <eta/oracle/delta_time.h>
++#include <sys/param.h>
++
++#define ETA_MAX_PARALLEL_REGION 128
++
++static int eta_print_prediction = 0;
++static size_t eta_maximum_thread_count;
++
++struct eta_threads_config_t {
++    double duration;
++    int nb;
++};
++struct eta_threads_config_t eta_threads_config[32];
++static int eta_threads_config_size = 0;
++
++static char const * copy_until(char * dest, char const * src, char delim) {
++    for (;*src != delim; ++src) {
++        *(dest++) = *src;
++        if (*src == 0)
++            return NULL;
++    }
++
++    *dest = 0;
++    return ++src;
++}
++
++
++static void __attribute__((constructor)) init_eta_oracle (void)
++{
++  eta_dt_oracle_init(2 * ETA_MAX_PARALLEL_REGION);
++  if (eta_dt_oracle_is_active()) {
++    char const * const omp_num_threads_var = getenv("OMP_NUM_THREADS");
++    if (omp_num_threads_var == NULL)
++      eta_maximum_thread_count = omp_get_num_threads();
++    else
++      sscanf(omp_num_threads_var, "%ld", &eta_maximum_thread_count);
++
++    if (eta_dt_oracle_is_prediction_enabled()) {
++      char const * print = getenv("PRINT_PREDICTION");
++      eta_print_prediction = (print != NULL) && (strcmp(print, "TRUE") == 0);
++
++      char buf[1024];
++
++      char const * eta_threads_env = getenv("ETA_THREADS");
++      assert(eta_threads_env != NULL);
++      while (eta_threads_env != NULL) {
++          eta_threads_env = copy_until(buf, eta_threads_env, ':');
++          sscanf(buf, "%d", &eta_threads_config[eta_threads_config_size].nb);
++          eta_threads_env = copy_until(buf, eta_threads_env, ',');
++          sscanf(buf, "%lf", &eta_threads_config[eta_threads_config_size].duration);
++
++          printf("Use %d threads for parallel region taking more than %lfs\n",
++                 eta_threads_config[eta_threads_config_size].nb,
++                 eta_threads_config[eta_threads_config_size].duration);
++          ++eta_threads_config_size;
++      }
++    } else {
++      fprintf(stderr, "Eta oracle recording\n");
++    }
++  } else {
++    fprintf(stderr, "Eta oracle is disabled\n");
++  }
++}
++
++static void __attribute__((destructor)) deinit_eta_oracle (void)
++{
++  eta_dt_oracle_deinit();
++}
++
++static int eta_start_parallel_region (void * fn, unsigned * nthreads)
++{
++  // if oracle is disabled, do nothing
++  if (!eta_dt_oracle_is_active())
++      return -2;
++
++  _Atomic static void *functions[ETA_MAX_PARALLEL_REGION];
++  _Atomic static int nb_functions = 0;
++
++  // Bind function to integer.
++  int id = 0;
++  for (; id < nb_functions; ++id)
++    if (functions[id] == (void *)fn) 
++      break;
++
++  if (id == nb_functions) {
++    ++nb_functions;
++    functions[id] = fn;
++  }
++
++  // Each parallel region is binded to two ids, one for it start and one for its end
++  id *= 2;
++
++  eta_dt_oracle_add_event(id);
++
++  if (eta_dt_oracle_is_prediction_enabled()) {
++    struct eta_dt_oracle_prediction prediction;
++    eta_dt_oracle_get_prediction(&prediction);
++    if (eta_print_prediction)
++     fprintf(stderr, "%f\n", prediction.dt);
++
++    if (prediction.type < 0)
++        *nthreads = MIN(eta_threads_config[0].nb, eta_maximum_thread_count);
++    else {
++        for (int i = 0; i < eta_threads_config_size; ++i) {
++            if (prediction.dt > eta_threads_config[i].duration) {
++                *nthreads = MIN(eta_threads_config[i].nb, eta_maximum_thread_count);
++                break;
++            }
++        }
++    }
++  }
++
++  return id + 1; // return id for stop parallel region function
++}
++
++static void eta_stop_parallel_region (int id)
++{
++  eta_dt_oracle_add_event(id);
++}
++
++#endif
+ 
+ /* Determine the number of threads to be launched for a PARALLEL construct.
+    This algorithm is explicitly described in OpenMP 3.0 section 2.4.1.
+@@ -172,11 +300,19 @@ void
+ GOMP_parallel (void (*fn) (void *), void *data, unsigned num_threads,
+ 	       unsigned int flags)
+ {
++#ifdef ETA_ENABLED
++  int const id = eta_start_parallel_region(fn, &num_threads);
++#endif
++
+   num_threads = gomp_resolve_num_threads (num_threads, 0);
+   gomp_team_start (fn, data, num_threads, flags, gomp_new_team (num_threads),
+ 		   NULL);
+   fn (data);
+   ialias_call (GOMP_parallel_end) ();
++
++#ifdef ETA_ENABLED
++  eta_stop_parallel_region(id);
++#endif
+ }
+ 
+ unsigned
+@@ -184,6 +320,11 @@ GOMP_parallel_reductions (void (*fn) (void *), void *data,
+ 			  unsigned num_threads, unsigned int flags)
+ {
+   struct gomp_taskgroup *taskgroup;
++
++#ifdef ETA_ENABLED
++  int const id = eta_start_parallel_region(fn, &num_threads);
++#endif
++
+   num_threads = gomp_resolve_num_threads (num_threads, 0);
+   uintptr_t *rdata = *(uintptr_t **)data;
+   taskgroup = gomp_parallel_reduction_register (rdata, num_threads);
+@@ -193,6 +334,11 @@ GOMP_parallel_reductions (void (*fn) (void *), void *data,
+   ialias_call (GOMP_parallel_end) ();
+   gomp_sem_destroy (&taskgroup->taskgroup_sem);
+   free (taskgroup);
++
++#ifdef ETA_ENABLED
++  eta_stop_parallel_region(id);
++#endif
++
+   return num_threads;
+ }
+ 
+diff --git a/libgomp/team.c b/libgomp/team.c
+index 19cc392a532..7eed88333c6 100644
+--- a/libgomp/team.c
++++ b/libgomp/team.c
+@@ -30,6 +30,7 @@
+ #include "pool.h"
+ #include <stdlib.h>
+ #include <string.h>
++#include <stdio.h>
+ 
+ #ifdef LIBGOMP_USE_PTHREADS
+ pthread_attr_t gomp_thread_attr;
+@@ -119,24 +120,42 @@ gomp_thread_start (void *xdata)
+   else
+     {
+       pool->threads[thr->ts.team_id] = thr;
++      static _Atomic int nb_threads = 0;
++      nb_threads++;
++      static gomp_barrier_t pool_barrier;
++
++      if(thr->ts.team_id == 1)
++	gomp_barrier_init(&pool_barrier, nb_threads);
++      else
++	gomp_barrier_reinit(&pool_barrier, nb_threads);
+ 
+       gomp_simple_barrier_wait (&pool->threads_dock);
++      int nloops = 0;
+       do
+ 	{
++	  nloops++;
+ 	  struct gomp_team *team = thr->ts.team;
+ 	  struct gomp_task *task = thr->task;
+-
+-	  local_fn (local_data);
+-	  gomp_team_barrier_wait_final (&team->barrier);
+-	  gomp_finish_task (task);
+-
++	  if(local_fn) {
++	    // waiting until all the threads start working
++	    gomp_barrier_wait(&pool_barrier);
++	    local_fn (local_data);
++
++	    gomp_team_barrier_wait_final (&team->barrier);
++	    gomp_finish_task (task);
++	  } else {
++	    gomp_barrier_wait(&pool_barrier);
++	    // waiting until all the threads start working
++	  }
++
++	  // waiting until all the threads exit the previous barrier
+ 	  gomp_simple_barrier_wait (&pool->threads_dock);
+ 
+ 	  local_fn = thr->fn;
+ 	  local_data = thr->data;
+ 	  thr->fn = NULL;
+ 	}
+-      while (local_fn);
++      while (1);
+     }
+ 
+   gomp_sem_destroy (&thr->release);
+@@ -187,6 +206,7 @@ gomp_new_team (unsigned nthreads)
+ #ifndef HAVE_SYNC_BUILTINS
+       gomp_mutex_init (&team->work_share_list_free_lock);
+ #endif
++
+       gomp_barrier_init (&team->barrier, nthreads);
+       gomp_mutex_init (&team->task_lock);
+ 
+@@ -243,6 +263,7 @@ gomp_free_pool_helper (void *thread_pool)
+   struct gomp_thread *thr = gomp_thread ();
+   struct gomp_thread_pool *pool
+     = (struct gomp_thread_pool *) thread_pool;
++
+   gomp_simple_barrier_wait_last (&pool->threads_dock);
+   gomp_sem_destroy (&thr->release);
+   thr->thread_pool = NULL;
+@@ -465,18 +486,20 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+      only the initial program thread will modify gomp_threads.  */
+   if (!nested)
+     {
++
++      int available_threads = pool->threads_size ? pool->threads_size - 1:0;
+       old_threads_used = pool->threads_used;
+ 
+-      if (nthreads <= old_threads_used)
++      if (nthreads <= available_threads) {
+ 	n = nthreads;
+-      else if (old_threads_used == 0)
++      } else if (available_threads == 0)
+ 	{
+ 	  n = 0;
+ 	  gomp_simple_barrier_init (&pool->threads_dock, nthreads);
+ 	}
+       else
+ 	{
+-	  n = old_threads_used;
++	  n = available_threads;
+ 
+ 	  /* Increase the barrier threshold to make sure all new
+ 	     threads arrive before the team is released.  */
+@@ -494,6 +517,7 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+       if (nthreads >= pool->threads_size)
+ 	{
+ 	  pool->threads_size = nthreads + 1;
++	  gomp_simple_barrier_reinit (&pool->threads_dock, pool->threads_size-1);
+ 	  pool->threads
+ 	    = gomp_realloc (pool->threads,
+ 			    pool->threads_size
+@@ -719,9 +743,10 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+ 	      /* Increase the barrier threshold to make sure all new
+ 		 threads and all the threads we're going to let die
+ 		 arrive before the team is released.  */
+-	      if (affinity_count)
++	      if (affinity_count) {
+ 		gomp_simple_barrier_reinit (&pool->threads_dock,
+ 					    nthreads + affinity_count);
++	      }
+ 	    }
+ 	}
+ 
+@@ -868,8 +893,9 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+  do_release:
+   if (nested)
+     gomp_barrier_wait (&team->barrier);
+-  else
++  else {
+     gomp_simple_barrier_wait (&pool->threads_dock);
++  }
+ 
+   /* Decrease the barrier threshold to match the number of threads
+      that should arrive back at the end of this team.  The extra
+@@ -879,6 +905,7 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+      set to NTHREADS + AFFINITY_COUNT.  For NTHREADS < OLD_THREADS_COUNT,
+      AFFINITY_COUNT if non-zero will be always at least
+      OLD_THREADS_COUNT - NTHREADS.  */
++#if 0
+   if (__builtin_expect (nthreads < old_threads_used, 0)
+       || __builtin_expect (affinity_count, 0))
+     {
+@@ -897,6 +924,7 @@ gomp_team_start (void (*fn) (void *), void *data, unsigned nthreads,
+       gomp_mutex_unlock (&gomp_managed_threads_lock);
+ #endif
+     }
++#endif
+   if (__builtin_expect (gomp_display_affinity_var, 0))
+     {
+       if (nested

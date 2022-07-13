@@ -35,7 +35,11 @@ done
 shift $(($OPTIND - 1))
 
 # get Pythia
+mkdir -p "$BUILDDIR" 2>/dev/null
 cd "$BUILDDIR"
+if [ -d "pythia" ]; then
+    rm -rf "pythia"
+fi
 git clone "$PYTHIA_URL" pythia || exit 1
 cd pythia || exit 1
 git reset --hard $COMMIT_HASH || exit 1
