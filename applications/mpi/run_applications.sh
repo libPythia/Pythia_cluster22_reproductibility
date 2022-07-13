@@ -8,6 +8,7 @@ APP_DIR="$DIRNAME"
 PB_SIZE=small
 APP="amg lulesh kripke minife quicksilver bt cg ep ft is lu mg sp"
 
+PYTHIA_MODE=none
 
 MPI_CMD=mpirun
 MPI_ARGS=""
@@ -23,9 +24,11 @@ OPTIONS:
    -b <director>		    Path to applications build directory
    -s <pb_size>			    Problem size (small, medium, large)
    -a <application>		    Run a specific application
+   -r                               Enable Pythia-record
+   -P                               Enable Pythia-predict
 EOF
 }
-while getopts 'p:s:a:h' OPTION; do
+while getopts 'p:s:a:hrP' OPTION; do
   case $OPTION in
   p)
 	PYTHIA_PREFIX=$(realpath $OPTARG)
@@ -39,14 +42,29 @@ while getopts 'p:s:a:h' OPTION; do
   a)
 	APP=$OPTARG
 	;;
-  h)	usage
-	exit 2
-	;;
+  r)
+      PYTHIA_MODE=record
+      export PYTHIA_MPI=Record
+      #export PYTHIA_MPI_LOG=YES
+      ;;
+  P)
+      PYTHIA_MODE=predict
+      export PYTHIA_MPI=Predict
+      #export PYTHIA_MPI_LOG=YES
+      ;;
+  h)
+      usage
+      exit 2
+      ;;
   esac
 done
 # remove the options from the command line
 shift $(($OPTIND - 1))
 
+
+MPI_INTERCEPTOR="$PYTHIA_PREFIX/bin/mpi_interceptor"
+MPI_ARGS="$MPI_ARGS $MPI_INTERCEPTOR"
+LD_LIBRARY_PATH="$PYTHIA_PREFIX/lib:$PYTHIA_PREFIX/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH"
 
 # AMG
 function run_amg() {
@@ -68,8 +86,8 @@ function run_amg() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 8 $AMG_PATH $AMG_ARGS"
-    "$MPI_CMD" $MPI_ARGS -np 8 "$AMG_PATH" $AMG_ARGS
+    echo "Running $MPI_CMD -np 8 $MPI_ARGS $AMG_PATH $AMG_ARGS"
+    "$MPI_CMD" -np 8 $MPI_ARGS "$AMG_PATH" $AMG_ARGS
 }
 
 # BT, CG, EP, FT, IS, LU, MG, SP
@@ -93,8 +111,8 @@ function run_npb() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 64 $NPB_PATH"
-    "$MPI_CMD" $MPI_ARGS -np 64 "$NPB_PATH"
+    echo "Running $MPI_CMD -np 64 $MPI_ARGS $NPB_PATH"
+    "$MPI_CMD" -np 64 $MPI_ARGS "$NPB_PATH"
 }
 
 # Kripke
@@ -117,8 +135,8 @@ function run_kripke() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 8 $APP_PATH $APP_ARGS"
-    "$MPI_CMD" $MPI_ARGS -np 8 "$APP_PATH" $APP_ARGS
+    echo "Running $MPI_CMD -np 8 $MPI_ARGS $APP_PATH $APP_ARGS"
+    "$MPI_CMD" -np 8 $MPI_ARGS "$APP_PATH" $APP_ARGS
 }
 
 
@@ -142,8 +160,8 @@ function run_lulesh() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 8 $APP_PATH $APP_ARGS"
-    "$MPI_CMD" $MPI_ARGS -np 8 "$APP_PATH" $APP_ARGS
+    echo "Running $MPI_CMD -np 8 $MPI_ARGS $APP_PATH $APP_ARGS"
+    "$MPI_CMD" -np 8 $MPI_ARGS "$APP_PATH" $APP_ARGS
 }
 
 
@@ -167,8 +185,8 @@ function run_minife() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 8 $APP_PATH $APP_ARGS"
-    "$MPI_CMD" $MPI_ARGS -np 8 "$APP_PATH" $APP_ARGS
+    echo "Running $MPI_CMD -np 8 $MPI_ARGS $APP_PATH $APP_ARGS"
+    "$MPI_CMD" -np 8 $MPI_ARGS "$APP_PATH" $APP_ARGS
 }
 
 # Quicksilver
@@ -191,17 +209,10 @@ function run_quicksilver() {
 	    exit 1
     esac
 
-    echo "Running $MPI_CMD $MPI_ARGS -np 8 $APP_PATH $APP_ARGS"
-    "$MPI_CMD" $MPI_ARGS -np 8 "$APP_PATH" $APP_ARGS
+    echo "Running $MPI_CMD -np 8 $MPI_ARGS $APP_PATH $APP_ARGS"
+    "$MPI_CMD"  -np 8 $MPI_ARGS "$APP_PATH" $APP_ARGS
 }
 
-
-#run_amg
-#run_npb bt
-#run_kripke
-#run_lulesh
-#run_minife
-#run_quicksilver
 
 for i in $APP ; do
     case $i in
