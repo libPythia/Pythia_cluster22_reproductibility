@@ -1,0 +1,284 @@
+diff --git a/lulesh.cc b/lulesh.cc
+index c840817..e3cdc79 100644
+--- a/lulesh.cc
++++ b/lulesh.cc
+@@ -161,6 +161,8 @@ Additional BSD Notice
+ 
+ #include "lulesh.h"
+ 
++#define REUSE_BUFFERS 1
++
+ /* Work Routines */
+ 
+ static inline
+@@ -503,19 +505,30 @@ void IntegrateStressForElems( Domain &domain,
+ #endif
+ 
+    Index_t numElem8 = numElem * 8 ;
+-   Real_t *fx_elem;
+-   Real_t *fy_elem;
+-   Real_t *fz_elem;
+    Real_t fx_local[8] ;
+    Real_t fy_local[8] ;
+    Real_t fz_local[8] ;
++#ifdef REUSE_BUFFERS
++   static Real_t *fx_elem=NULL;
++   static Real_t *fy_elem=NULL;
++   static Real_t *fz_elem=NULL;
+ 
++  if (omp_get_max_threads() > 1 && fx_elem==NULL) {
++     fx_elem = Allocate<Real_t>(numElem8) ;
++     fy_elem = Allocate<Real_t>(numElem8) ;
++     fz_elem = Allocate<Real_t>(numElem8) ;
++  }
++#else
++  Real_t *fx_elem;
++  Real_t *fy_elem;
++  Real_t *fz_elem;
+ 
+-  if (numthreads > 1) {
++  if (omp_get_max_threads() > 1) {
+      fx_elem = Allocate<Real_t>(numElem8) ;
+      fy_elem = Allocate<Real_t>(numElem8) ;
+      fz_elem = Allocate<Real_t>(numElem8) ;
+   }
++#endif
+   // loop over all elements
+ 
+ #pragma omp parallel for firstprivate(numElem)
+@@ -537,7 +550,7 @@ void IntegrateStressForElems( Domain &domain,
+     CalcElemNodeNormals( B[0] , B[1], B[2],
+                           x_local, y_local, z_local );
+ 
+-    if (numthreads > 1) {
++    if (omp_get_max_threads() > 1) {
+        // Eliminate thread writing conflicts at the nodes by giving
+        // each element its own copy to write to
+        SumElemStressesToNodeForces( B, sigxx[k], sigyy[k], sigzz[k],
+@@ -559,7 +572,7 @@ void IntegrateStressForElems( Domain &domain,
+     }
+   }
+ 
+-  if (numthreads > 1) {
++  if (omp_get_max_threads() > 1) {
+      // If threaded, then we need to copy the data out of the temporary
+      // arrays used above into the final forces field
+ #pragma omp parallel for firstprivate(numNode)
+@@ -580,9 +593,11 @@ void IntegrateStressForElems( Domain &domain,
+         domain.fy(gnode) = fy_tmp ;
+         domain.fz(gnode) = fz_tmp ;
+      }
++#ifndef REUSE_BUFFERS
+      Release(&fz_elem) ;
+      Release(&fy_elem) ;
+      Release(&fx_elem) ;
++#endif
+   }
+ }
+ 
+@@ -730,16 +745,27 @@ void CalcFBHourglassForceForElems( Domain &domain,
+   
+    Index_t numElem8 = numElem * 8 ;
+ 
++#if REUSE_BUFFERS
++   static Real_t *fx_elem=NULL; 
++   static Real_t *fy_elem=NULL; 
++   static Real_t *fz_elem=NULL; 
++
++   if(omp_get_max_threads() > 1 && fx_elem==NULL) {
++      fx_elem = Allocate<Real_t>(numElem8) ;
++      fy_elem = Allocate<Real_t>(numElem8) ;
++      fz_elem = Allocate<Real_t>(numElem8) ;
++   }
++#else
+    Real_t *fx_elem; 
+    Real_t *fy_elem; 
+    Real_t *fz_elem; 
+ 
+-   if(numthreads > 1) {
++   if(omp_get_max_threads() > 1) {
+       fx_elem = Allocate<Real_t>(numElem8) ;
+       fy_elem = Allocate<Real_t>(numElem8) ;
+       fz_elem = Allocate<Real_t>(numElem8) ;
+    }
+-
++#endif
+    Real_t  gamma[4][8];
+ 
+    gamma[0][0] = Real_t( 1.);
+@@ -898,7 +924,7 @@ void CalcFBHourglassForceForElems( Domain &domain,
+ 
+       // With the threaded version, we write into local arrays per elem
+       // so we don't have to worry about race conditions
+-      if (numthreads > 1) {
++      if (omp_get_max_threads() > 1) {
+          fx_local = &fx_elem[i3] ;
+          fx_local[0] = hgfx[0];
+          fx_local[1] = hgfx[1];
+@@ -964,7 +990,7 @@ void CalcFBHourglassForceForElems( Domain &domain,
+       }
+    }
+ 
+-   if (numthreads > 1) {
++   if (omp_get_max_threads() > 1) {
+      // Collect the data from the local arrays into the final force arrays
+ #pragma omp parallel for firstprivate(numNode)
+       for( Index_t gnode=0 ; gnode<numNode ; ++gnode )
+@@ -984,9 +1010,11 @@ void CalcFBHourglassForceForElems( Domain &domain,
+          domain.fy(gnode) += fy_tmp ;
+          domain.fz(gnode) += fz_tmp ;
+       }
++#ifndef REUSE_BUFFERS
+       Release(&fz_elem) ;
+       Release(&fy_elem) ;
+       Release(&fx_elem) ;
++#endif
+    }
+ }
+ 
+@@ -998,13 +1026,31 @@ void CalcHourglassControlForElems(Domain& domain,
+ {
+    Index_t numElem = domain.numElem() ;
+    Index_t numElem8 = numElem * 8 ;
++#ifdef REUSE_BUFFERS
++   static Real_t *dvdx = NULL;
++   static Real_t *dvdy = NULL;
++   static Real_t *dvdz = NULL;
++   static Real_t *x8n  = NULL;
++   static Real_t *y8n  = NULL;
++   static Real_t *z8n  = NULL;
++
++   if(!dvdx) {
++     dvdx = Allocate<Real_t>(numElem8) ;
++     dvdy = Allocate<Real_t>(numElem8) ;
++     dvdz = Allocate<Real_t>(numElem8) ;
++     x8n  = Allocate<Real_t>(numElem8) ;
++     y8n  = Allocate<Real_t>(numElem8) ;
++     z8n  = Allocate<Real_t>(numElem8) ;
++   }
++#else
+    Real_t *dvdx = Allocate<Real_t>(numElem8) ;
+    Real_t *dvdy = Allocate<Real_t>(numElem8) ;
+    Real_t *dvdz = Allocate<Real_t>(numElem8) ;
+    Real_t *x8n  = Allocate<Real_t>(numElem8) ;
+    Real_t *y8n  = Allocate<Real_t>(numElem8) ;
+    Real_t *z8n  = Allocate<Real_t>(numElem8) ;
+-
++#endif
++   
+    /* start loop over elements */
+ #pragma omp parallel for firstprivate(numElem)
+    for (Index_t i=0 ; i<numElem ; ++i){
+@@ -1046,12 +1092,14 @@ void CalcHourglassControlForElems(Domain& domain,
+                                     hgcoef, numElem, domain.numNode()) ;
+    }
+ 
++#ifndef REUSE_BUFFERS
+    Release(&z8n) ;
+    Release(&y8n) ;
+    Release(&x8n) ;
+    Release(&dvdz) ;
+    Release(&dvdy) ;
+    Release(&dvdx) ;
++#endif
+ 
+    return ;
+ }
+@@ -1064,10 +1112,25 @@ void CalcVolumeForceForElems(Domain& domain)
+    Index_t numElem = domain.numElem() ;
+    if (numElem != 0) {
+       Real_t  hgcoef = domain.hgcoef() ;
++
++#ifdef REUSE_BUFFERS
++      static Real_t *sigxx  = NULL;
++      static Real_t *sigyy  = NULL;
++      static Real_t *sigzz  = NULL;
++      static Real_t *determ = NULL;
++
++      if(sigxx == NULL) {
++	sigxx  = Allocate<Real_t>(numElem) ;
++	sigyy  = Allocate<Real_t>(numElem) ;
++	sigzz  = Allocate<Real_t>(numElem) ;
++	determ = Allocate<Real_t>(numElem) ;
++      }
++#else
+       Real_t *sigxx  = Allocate<Real_t>(numElem) ;
+       Real_t *sigyy  = Allocate<Real_t>(numElem) ;
+       Real_t *sigzz  = Allocate<Real_t>(numElem) ;
+       Real_t *determ = Allocate<Real_t>(numElem) ;
++#endif
+ 
+       /* Sum contributions to total stress tensor */
+       InitStressTermsForElems(domain, sigxx, sigyy, sigzz, numElem);
+@@ -1091,11 +1154,12 @@ void CalcVolumeForceForElems(Domain& domain)
+       }
+ 
+       CalcHourglassControlForElems(domain, determ, hgcoef) ;
+-
++#ifndef REUSE_BUFFERS
+       Release(&determ) ;
+       Release(&sigzz) ;
+       Release(&sigyy) ;
+       Release(&sigxx) ;
++#endif
+    }
+ }
+ 
+@@ -2019,6 +2083,7 @@ void CalcPressureForElems(Real_t* p_new, Real_t* bvc,
+                           Real_t p_cut, Real_t eosvmax,
+                           Index_t length, Index_t *regElemList)
+ {
++// REDUCE_THREAD_NB_BEGIN
+ #pragma omp parallel for firstprivate(length)
+    for (Index_t i = 0; i < length ; ++i) {
+       Real_t c1s = Real_t(2.0)/Real_t(3.0) ;
+@@ -2041,6 +2106,7 @@ void CalcPressureForElems(Real_t* p_new, Real_t* bvc,
+       if    (p_new[i]       <  pmin)
+          p_new[i]   = pmin ;
+    }
++// REDUCE_THREAD_NB_END
+ }
+ 
+ /******************************************/
+@@ -2459,6 +2525,9 @@ void CalcCourantConstraintForElems(Domain &domain, Index_t length,
+    Real_t  dtcourant_per_thread[1];
+ #endif
+ 
++   for (int i = 0; i < threads; ++i)
++       dtcourant_per_thread[i] = -1;
++
+ #pragma omp parallel firstprivate(length, qqc)
+    {
+       Real_t   qqc2 = Real_t(64.0) * qqc * qqc ;
+@@ -2497,8 +2566,8 @@ void CalcCourantConstraintForElems(Domain &domain, Index_t length,
+       courant_elem_per_thread[thread_num] = courant_elem ;
+    }
+ 
+-   for (Index_t i = 1; i < threads; ++i) {
+-      if (dtcourant_per_thread[i] < dtcourant_per_thread[0] ) {
++   for (Index_t i = 1; i < omp_get_max_threads(); ++i) {
++      if (dtcourant_per_thread[i] > 0 && dtcourant_per_thread[i] < dtcourant_per_thread[0] ) {
+          dtcourant_per_thread[0]    = dtcourant_per_thread[i];
+          courant_elem_per_thread[0] = courant_elem_per_thread[i];
+       }
+@@ -2528,6 +2597,9 @@ void CalcHydroConstraintForElems(Domain &domain, Index_t length,
+    Real_t  dthydro_per_thread[1];
+ #endif
+ 
++   for (int i = 0; i < threads; ++i)
++       dthydro_per_thread[i] = -1;
++
+ #pragma omp parallel firstprivate(length, dvovmax)
+    {
+       Real_t dthydro_tmp = dthydro ;
+@@ -2557,8 +2629,8 @@ void CalcHydroConstraintForElems(Domain &domain, Index_t length,
+       hydro_elem_per_thread[thread_num] = hydro_elem ;
+    }
+ 
+-   for (Index_t i = 1; i < threads; ++i) {
+-      if(dthydro_per_thread[i] < dthydro_per_thread[0]) {
++   for (Index_t i = 1; i < omp_get_max_threads(); ++i) {
++      if(dthydro_per_thread[i] != -1 && dthydro_per_thread[i] < dthydro_per_thread[0]) {
+          dthydro_per_thread[0]    = dthydro_per_thread[i];
+          hydro_elem_per_thread[0] =  hydro_elem_per_thread[i];
+       }

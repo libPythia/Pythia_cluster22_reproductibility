@@ -49,3 +49,8 @@ export LDFLAGS="-L$PREFIX/lib/x86_64-linux-gnu/ $LDFLAGS"
 
 ## install GNU OpenMP
 "$DIRNAME/runtimes/gnu_openmp/install.sh" -b "$BUILDDIR" -p "$PREFIX"
+
+
+# Compile applications
+"$DIRNAME/applications/mpi/install.sh" -b "$BUILDDIR"
+"$DIRNAME/applications/openmp/install.sh" -b "$BUILDDIR"
