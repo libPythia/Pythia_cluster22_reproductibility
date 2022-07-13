@@ -3,7 +3,7 @@
 PREFIX=$PWD/install
 BUILDDIR=$PWD/build
 
-DIRNAME=$(dirname $0)
+DIRNAME=$(realpath $(dirname $0))
 
 usage()
 {
@@ -29,6 +29,8 @@ while getopts 'p:b:h' OPTION; do
 	;;
   esac
 done
+# remove the options from the command line
+shift $(($OPTIND - 1))
 
 
 # install Pythia

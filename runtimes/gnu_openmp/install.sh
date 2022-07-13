@@ -39,10 +39,10 @@ shift $(($OPTIND - 1))
 # get gcc
 mkdir -p "$BUILDDIR" 2>/dev/null
 cd "$BUILDDIR"
-#if [ -d "gcc" ]; then
-#    rm -rf "gcc"
-#fi
-#git clone $GCC_URL gcc || exit 1
+if [ -d "gcc" ]; then
+    rm -rf "gcc"
+fi
+git clone $GCC_URL gcc || exit 1
 cd gcc || exit 1 
 git reset --hard $COMMIT_HASH || exit 1
 
