@@ -63,8 +63,10 @@ shift $(($OPTIND - 1))
 
 
 MPI_INTERCEPTOR="$PYTHIA_PREFIX/bin/mpi_interceptor"
-MPI_ARGS="$MPI_ARGS $MPI_INTERCEPTOR"
-LD_LIBRARY_PATH="$PYTHIA_PREFIX/lib:$PYTHIA_PREFIX/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH"
+if [ -n "$PYTHIA_MPI" ]; then
+    MPI_ARGS="$MPI_ARGS $MPI_INTERCEPTOR"
+    LD_LIBRARY_PATH="$PYTHIA_PREFIX/lib:$PYTHIA_PREFIX/lib/x86_64-linux-gnu/:$LD_LIBRARY_PATH"
+fi
 
 # AMG
 function run_amg() {

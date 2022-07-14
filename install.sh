@@ -64,6 +64,8 @@ export LDFLAGS="-L$PREFIX/lib/x86_64-linux-gnu/ $LDFLAGS"
 
 
 # Compile applications
+"$DIRNAME/applications/openmp/install.sh" -b "$DIRNAME/applications/openmp" $COMMON_OPTIONS || exit 1
+
 PATH=$OLDPATH #restore the old PATH to prevent applications from being compiled with our gcc/g++
 "$DIRNAME/applications/mpi/install.sh" -b "$DIRNAME/applications/mpi" $COMMON_OPTIONS || exit 1
-"$DIRNAME/applications/openmp/install.sh" -b "$DIRNAME/applications/openmp" $COMMON_OPTIONS || exit 1
+
