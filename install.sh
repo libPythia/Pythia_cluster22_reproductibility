@@ -4,6 +4,7 @@ PREFIX=$PWD/install
 BUILDDIR=$PWD/build
 
 DIRNAME=$(realpath $(dirname $0))
+FORCE=n
 
 usage()
 {
@@ -14,9 +15,10 @@ OPTIONS:
    -h                               Show this message
    -p <director>		    Path to the installation directory
    -b <directory>	       	    Path to the build directory
+   -f 				    Force installation
 EOF
 }
-while getopts 'p:b:h' OPTION; do
+while getopts 'p:b:hf' OPTION; do
   case $OPTION in
   p)
 	PREFIX=$(realpath $OPTARG)
@@ -24,6 +26,9 @@ while getopts 'p:b:h' OPTION; do
   b)
 	BUILDDIR=$(realpath $OPTARG)
 	;;
+  f)
+      FORCE=y
+      ;;
   h)	usage
 	exit 2
 	;;
@@ -33,9 +38,15 @@ done
 shift $(($OPTIND - 1))
 
 
-# install Pythia
-"$DIRNAME/pythia/install_pythia.sh" -b "$BUILDDIR" -p "$PREFIX"
+COMMON_OPTIONS=""
+if [ "$FORCE" = "y" ]; then
+    COMMON_OPTIONS="$OPTIONS -f"
+fi
 
+# install Pythia
+"$DIRNAME/pythia/install_pythia.sh" -b "$BUILDDIR" -p "$PREFIX" $COMMON_OPTIONS || exit 1
+
+OLDPATH=$PATH;
 export PATH="$PREFIX/bin:$PATH"
 export PKG_CONFIG_PATH="$PREFIX/lib/x86_64-linux-gnu/pkgconfig/:$PKG_CONFIG_PATH"
 export CFLAGS="-I$PREFIX/include $CFLAGS"
@@ -45,12 +56,14 @@ export LDFLAGS="-L$PREFIX/lib/x86_64-linux-gnu/ $LDFLAGS"
 # Install runtime systems
 
 ## install pythia_mpi
-"$DIRNAME/runtimes/mpi/install.sh" -b "$BUILDDIR" -p "$PREFIX"
+"$DIRNAME/runtimes/mpi/install.sh" -b "$BUILDDIR" -p "$PREFIX" $COMMON_OPTIONS || exit 1
 
 ## install GNU OpenMP
-"$DIRNAME/runtimes/gnu_openmp/install.sh" -b "$BUILDDIR" -p "$PREFIX"
+"$DIRNAME/runtimes/gnu_openmp/install.sh" -b "$BUILDDIR" -p "$PREFIX" $COMMON_OPTIONS || exit 1
+
 
 
 # Compile applications
-"$DIRNAME/applications/mpi/install.sh" -b "$BUILDDIR"
-"$DIRNAME/applications/openmp/install.sh" -b "$BUILDDIR"
+PATH=$OLDPATH #restore the old PATH to prevent applications from being compiled with our gcc/g++
+"$DIRNAME/applications/mpi/install.sh" -b "$DIRNAME/applications/mpi" $COMMON_OPTIONS || exit 1
+"$DIRNAME/applications/openmp/install.sh" -b "$DIRNAME/applications/openmp" $COMMON_OPTIONS || exit 1
